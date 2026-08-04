@@ -35,6 +35,10 @@ OpenCode was checked in both headless and interactive modes.
 `client.session.promptAsync` accepted the nudge in both cases; the persistent TUI completed the generated turn, while `opencode run` exited before another turn.
 This is the current headless fail-open limit.
 
+auggie was added on 2026-08-03 with auggie 0.34.0 in the interactive TUI (driven through Herdr panes) and in headless `auggie --print`.
+The tracked repo-root `.augment/settings.json` `SessionStart` hook ran with no separate folder-trust step, but a dynamic hook-only token delivered through `hookSpecificOutput.additionalContext` did not reach model context in either mode (`NO_TOKEN`).
+This is the current auggie fail-open limit; the emitted operating block plus the read-once reminder carry the nudge.
+
 Pi command shape:
 
 ```sh
@@ -134,7 +138,7 @@ tests/fm-crew-state.test.sh
 
 ## Turn-end guard
 
-The direct and passive mechanisms were validated across all five harnesses on 2026-07-08 through 2026-07-12, with Claude's replacement Stop-owned path revalidated on 2026-07-24.
+The direct and passive mechanisms were validated across all six harnesses on 2026-07-08 through 2026-08-03, with Claude's replacement Stop-owned path revalidated on 2026-07-24.
 
 | Harness | Version verified | Mechanism | Observed result |
 | --- | --- | --- | --- |
@@ -143,6 +147,7 @@ The direct and passive mechanisms were validated across all five harnesses on 20
 | OpenCode | 1.17.6 | Passive `session.idle` callback | Throwing could not block, while `promptAsync` scheduled one TUI follow-up; headless remained fail-open. |
 | Pi | 0.80.5 | Passive `agent_settled` callback | Exactly one guard follow-up ran for an unhealthy cycle, with no recursion across tool turns. |
 | Grok | 0.2.112 native and 0.2.73 pre-native | Running-payload adaptive `Stop` | Native false-to-true continuation stayed in one process with two model turns and zero resume launches; the field-absent pre-native process launched exactly one guarded resume. |
+| auggie | 0.34.0 | Passive `Stop` plus bounded `--resume` | In the interactive TUI the `Stop` hook fired once but neither exit 2 nor a `{"decision":"block"}` output forced a continuation (auggie's bundle documents "code 2 only blocks for PreToolUse"); `auggie --resume <conversation_id>` forced one context-preserving follow-up, and the `AUGGIE_TURNEND_GUARD_ACTIVE` latch prevented recursion. |
 
 The Grok adaptive matrix ran on 2026-07-28 with separate scratch repositories and homes, dedicated tmux sockets, one target plus one control window, ambient tmux variables removed, and a socket-bound wrapper first in `PATH`.
 
@@ -162,6 +167,8 @@ ok - Grok adaptive Stop real-process matrix passed with exact target cleanup and
 ```
 
 The same run proved the Claude-compatible Stop entries stay inert under `GROK_AGENT`, the legacy resume carries `GROK_TURNEND_GUARD_ACTIVE=1`, and every replacement root is removed after exact target cleanup while its control window survives.
+
+auggie's PreToolUse seatbelts were verified live on 2026-08-03 in the interactive TUI: a `matcher:"Bash"` hook never fired (auggie's real tool is `launch-process`), while an empty-matcher hook returning `hookSpecificOutput.permissionDecision=deny` on stdout blocked the tool and surfaced the reason to the model; the command is at `.tool_input.command`.
 
 The secondmate-home scope and manual-repair wake path were measured with Claude Code 2.1.207 on 2026-07-12, when a native background completion re-invoked the idle model with no human input.
 The current Stop-owned main/secondmate inclusion and child-worktree exclusion are covered deterministically by `tests/fm-claude-stop-autoarm.test.sh`.

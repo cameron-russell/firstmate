@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, and muse.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, muse, and auggie.
 user-invocable: false
 metadata:
   internal: true
@@ -53,10 +53,11 @@ Use that value for interrupt, exit, resume, and skill-invocation facts.
 
 ## Primary turn-end guard
 
-The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` have empirically validated hook paths for the "no turn ends blind" guard.
+The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, and `auggie` have empirically validated hook paths for the "no turn ends blind" guard.
 `claude` and `codex` block directly through Stop hooks that preserve exit status 2 and stderr from `bin/fm-turnend-guard.sh`.
 `opencode`, `pi`, and `pi-signed` expose passive lifecycle callbacks and force one bounded follow-up when the shared predicate blocks.
 Grok selects native blocking or its pre-native bounded resume fallback from the exact running Stop payload; [`docs/turnend-guard.md`](../../../docs/turnend-guard.md) owns that contract.
+`auggie` exposes a passive Stop callback and forces one bounded `auggie --resume` follow-up when the shared predicate blocks.
 Kimi is outside the primary turn-end guard scope, while `docs/turnend-guard.md` owns its separate guarded global hook for crew wake signals.
 muse is CREWMATE/SCOUT ONLY and has no primary integration at all: its plugin engine (its only hook surface) is disabled in the default build, and its Claude-compatible hook dialect names `asyncRewake` and model reawakening as explicitly unsupported, which is exactly what a firstmate primary's turn-end supervision needs.
 `bin/fm-spawn.sh` refuses a `--secondmate` launch on muse for that reason.
@@ -66,8 +67,9 @@ When changing any primary turn-end hook, validate the real harness behavior in a
 
 ## Primary pre-arm (PreToolUse) seatbelt
 
-The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, and `grok` also have wired PreToolUse-equivalent hooks that deny a watcher-arm anti-pattern (shell `&`, truncating pipe, bundling, broad `pkill -f fm-watch`) before it runs.
+The primary integrations for `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, and `auggie` also have wired PreToolUse-equivalent hooks that deny a watcher-arm anti-pattern (shell `&`, truncating pipe, bundling, broad `pkill -f fm-watch`) before it runs.
 `claude` and `codex` block directly through PreToolUse hooks; `grok` blocks the same way but requires every `$VAR` reference in its hook `command` string to carry an inline `:-default` or it fails to launch the hook entirely.
+`auggie` blocks directly through a PreToolUse hook too, but its matcher must be empty (auggie's real tool name is `launch-process`, not `Bash`, so a `Bash` matcher never fires) and the deny object must land on stdout via `--auggie`.
 `opencode`, `pi`, and `pi-signed` block by throwing from `tool.execute.before` / returning `{block: true}` from `tool_call`.
 The exact hook files, commands, output-shaping quirks (Claude Code only honors the deny when stdout is empty), and validation transcripts are owned by `docs/arm-pretool-check.md`.
 When changing any watcher-arm PreToolUse hook, validate the real harness behavior in a scratch project before trusting it, then update that doc.
@@ -94,6 +96,7 @@ Before inspecting or changing session-open behavior, read `docs/sessionstart-nud
 At session start, `bin/fm-session-start.sh` prints exactly one watcher supervision block for the detected primary harness.
 Do not substitute another harness's wait shape when resuming supervision.
 Claude's Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns tokenless re-arm around `bin/fm-watch-arm.sh`, and Grok uses tracked background-notify cycles around `bin/fm-watch-arm.sh`.
+auggie uses tracked background-notify cycles too, launching `bin/fm-watch-arm-auggie.sh` (a thin wrapper that relays the shared arm's status line through auggie's `<augment-user-message>` background-completion marker) as a `launch-process` background task.
 Codex uses bounded foreground checkpoints through `bin/fm-watch-checkpoint.sh` because Codex cannot reason while a foreground tool call is running.
 OpenCode uses `.opencode/plugins/fm-primary-watch-arm.js`, which coordinates with the turn-end guard plugin and wakes the TUI with `client.session.promptAsync`.
 Pi and pi-signed use the tracked `.pi/extensions/fm-primary-turnend-guard.ts` plus the tracked `.pi/extensions/fm-primary-pi-watch.ts`, both project-local extensions the Pi engine auto-discovers once trusted.
@@ -123,6 +126,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
 | kimi | `--model <model>` | none | Verified 2026-07-25 on Kimi Code CLI 0.29.1. |
 | muse | `--model <model>` | `--reasoning-effort <low\|medium\|high\|xhigh>`, and `ultra` only for an explicit `max` | Verified 2026-08-05 on Muse Code 0.1.0-R708.1. The flag accepts `none\|minimal\|low\|medium\|high\|xhigh\|ultra` and defaults to `high`. `ultra` is muse's max-class level, so it is reachable only through an explicit captain `max`, never from the generic fallback; `none` and `minimal` sit below the shared vocabulary and stay unreachable. |
+| auggie | `--model <model>` | none | Verified 2026-08-03 on auggie 0.34.0. `auggie --help` exposes no reasoning-effort flag, so firstmate records requested effort in metadata but omits it from launch. |
 
 The concrete `harness` field owns adapter identity independently of the model provider: `harness=pi` with `model=xai/grok-*` is Pi using xAI, not `harness=grok`, and does not require Grok CLI login; `harness=grok` remains the standalone Grok Build CLI adapter.
 No script resolves that split for you: establish which credential store a tuple reads from the discovery surfaces below plus `quota-axi auth --json`'s per-provider sources, and show that reasoning rather than inferring it from a harness, model, or source name.
@@ -140,6 +144,7 @@ Use the discovery surface in the current authenticated environment because suppo
 | pi / pi-signed | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
 | grok | Run `grok models`, which lists the models available to the current Grok installation and account. |
 | kimi | Run `kimi provider list --json`, which lists the current provider and model configuration. |
+| auggie | Run `auggie --list-models` (or open the interactive session's model picker); `auggie --help` documents the accepted `--model` input shape. |
 
 For an unfamiliar harness or model namespace, establish support and provider identity from that harness's authoritative CLI help, model listing, or current documentation rather than guessing from a name or prefix.
 A listing that reaches the account and does not contain the model is concrete evidence the model is unsupported: block that candidate and quote the result.
@@ -159,6 +164,7 @@ Natural language is acceptable if uncertain.
 - pi and pi-signed: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the structural composer reader; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
+- auggie: `/<skill>`, for example `/no-mistakes`; firstmate skills placed under `~/.augment/skills` are discovered.
 
 ## Submission acknowledgement hazards
 
@@ -460,3 +466,44 @@ A teardown refusal naming muse scratch is therefore correct behavior: inspect it
 muse is a day-0 `0.1.0` beta whose launcher polls a release channel hourly and can replace the running binary underneath the fleet, changing the process name with it.
 The captain accepted that risk, so firstmate does NOT set `MUSE_NO_AUTO_UPDATE=1`; a fleet that later wants stability can set it in the launch environment without any adapter change.
 Its plugin/hook engine reports `plugins are not available in this build` unless `MUSE_EXPERIMENTAL_PLUGINS=on`, which is why the busy source reads the session log instead of installing a hook.
+
+## auggie (VERIFIED 2026-08-03, auggie 0.34.0)
+
+auggie (the Augment CLI) is a verified crewmate, secondmate, and primary adapter.
+It launches from the `auggie` command on `PATH`; the installed binary is a `#!/usr/bin/env node` script (`.../@augmentcode/auggie/augment.mjs`), so process ancestry may report it as either the resolved `auggie` name or a bare `node` interpreter whose args carry `augment.mjs`.
+
+| Fact | Value |
+|---|---|
+| Launch | Positional prompt starts the supervised interactive session; `fm-spawn` passes `--allow-indexing` to skip the interactive indexing screen. |
+| Busy-pane signature | `esc to interrupt` (braille spinner line), the same footer claude/codex use; from herdr's live-verified auggie manifest. |
+| Idle footer | `? to show shortcuts` beneath a `›` (U+203A) composer prompt; the shared composer classifier already treats `›` as an agent prompt, so no `FM_COMPOSER_IDLE_RE` override is needed. |
+| Blocked signature | `Tool Approval Required` with `[A]llow [D]eny`; firstmate avoids it entirely with the autonomy allow-list below. |
+| Exit command | `/exit` |
+| Interrupt | single Escape |
+| Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
+| Env marker | `AUGMENT_AGENT=1`, set for child/tool processes (verified via `printenv`). This is the unambiguous native detection marker. |
+| Effort | No reasoning-effort flag exists, so requested effort is recorded in metadata but omitted from launch. |
+
+**Autonomy (no wildcard permission).**
+auggie grants tool autonomy per tool, and `--permission "*:allow"` is rejected because a tool name may contain only letters, numbers, hyphens, and underscores.
+So `fm-spawn` writes an explicit `toolPermissions` allow-list into the worktree `.augment/settings.json` rather than a launch flag - the targeted equivalent of claude's `--dangerously-skip-permissions`.
+The list names both current tools (`terminal`, `read`, `edit`, `write`, `web-search`, `web-fetch`, `remove-files`) and their legacy aliases (`launch-process`, `view`, `str-replace-editor`, `save-file`) so autonomy holds across auggie versions; each `permission` must be an object with a `type` field, not a bare string, or the rule is dropped.
+Precedence merges CLI `--permission` flags, the workspace `.augment/settings.json`, and `~/.augment/settings.json` most-restrictive-wins, so the worktree allow-list never loosens a stricter global deny the captain set.
+
+**Turn-end signal.**
+auggie fires a `Stop` hook from the workspace `.augment/settings.json` at each turn boundary (verified: the worktree hook touched its target file on turn end).
+`fm-spawn` writes that Stop hook into the same gitignored worktree `.augment/settings.json` as the autonomy allow-list, pointing at this task's `state/<id>.turn-ended`, and `fm-teardown` removes the file so a pooled worktree cannot fire a stale signal.
+A secondmate gets the allow-list without the Stop hook, since an idle secondmate pane is healthy and has no stale-pane detection.
+
+**tmux liveness.**
+Because auggie runs under `node`, `bin/backends/tmux.sh` classifies a resolved `auggie` foreground as `alive` and leaves a bare `node` foreground as `ambiguous` - the conservative verdict that never licenses a duplicate spawn, since `node` is shared with other node-based harnesses.
+
+No trust dialog appeared on a clean first launch in a fresh worktree during verification; `--allow-indexing` covers the one interactive gate observed.
+
+**Primary-session guard fact (verified 2026-08-03, auggie 0.34.0, interactive TUI via herdr).**
+The firstmate PRIMARY reads a single tracked repo-root `.augment/settings.json` (distinct from the gitignored per-task crew worktree one), anchored through `${AUGMENT_PROJECT_DIR:-}`, registering a `Stop` turn-end hook, two empty-matcher `PreToolUse` seatbelts (`fm-arm-pretool-check.sh --auggie` and `fm-cd-pretool-check.sh --auggie`), and a fail-open `SessionStart` nudge.
+auggie's Stop hook is passive in the TUI: neither exit 2 (auggie's bundle documents "code 2 only blocks for PreToolUse") nor a `{"decision":"block"}` output forces a continuation, so `bin/fm-turnend-guard-auggie.sh` extracts `conversation_id` from the Stop payload and forces one same-session follow-up with `auggie --resume <conversation_id> --print --quiet <guard-reason>`, latched by `AUGGIE_TURNEND_GUARD_ACTIVE=1` so the nested Stop hook does not recurse.
+`--resume <cid>` preserves the ended session's full context (verified: it recalled the prior message).
+PreToolUse deny works in the TUI only with an empty matcher and only when the Claude-shaped `hookSpecificOutput.permissionDecision=deny` object (with `permissionDecisionReason`) is on stdout; the command lives at `.tool_input.command` (snake_case).
+auggie's primary watcher protocol is background-notify around `bin/fm-watch-arm-auggie.sh`, which wraps the shared arm's one status line in auggie's `<augment-user-message>...</augment-user-message>` marker so a completed background arm auto-injects the wake; the passive Stop hook is only a backstop for blind turn ends.
+Interactive TUI is the supported primary host; `auggie --print` is one-shot and does not persist a live background wait.

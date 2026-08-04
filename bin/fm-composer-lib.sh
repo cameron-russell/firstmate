@@ -19,9 +19,9 @@
 # container - a bordered composer box, where the harness draws its own prompt
 # glyph (e.g. claude's older `| > ... |`). On a bare, unstructured row it is a
 # dead-shell prompt and is NEVER "empty"; it classifies as `unknown` (not a safe
-# injection target). The AGENT prompt glyphs `❯` (claude), `›` (codex), and
-# `⟩` (U+27E9, muse) are a genuine empty agent composer either way, bordered or
-# bare. Every agent glyph must be listed in ALL THREE places below - the
+# injection target). The AGENT prompt glyphs `❯` (claude), `›` (codex, auggie),
+# and `⟩` (U+27E9, muse) are a genuine empty agent composer either way, bordered
+# or bare. Every agent glyph must be listed in ALL THREE places below - the
 # ghost-stripped-to-empty fallback, the bare-row case, and the leading-glyph
 # strip - because a glyph present in only some of them classifies inconsistently
 # depending on how its harness happens to colour the row.

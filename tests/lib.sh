@@ -34,6 +34,16 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Neutralize ambient harness env markers so detection/lock tests are hermetic
+# regardless of which harness runs the suite. Every verified harness that sets a
+# child-process marker (claude, pi, grok, auggie) is unset here; a test that wants
+# to assert marker precedence sets the marker explicitly on its own call. Without
+# this, running the suite from inside one of those harnesses (e.g. AUGMENT_AGENT=1
+# under auggie) makes "fall through to ancestry" assertions detect the runner's
+# harness. Individual tests already `env -u` some of these; this is the shared
+# backstop so none is missed.
+unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT AUGMENT_AGENT
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034

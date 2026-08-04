@@ -391,6 +391,15 @@ test_run_reports_a_failed_session_start_as_digest_text() {
   pass "run wrapper: a session start that cannot take the lock still opens the session and says so"
 }
 
+test_auggie_sessionstart_registration() {
+  local command
+  command=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$ROOT/.augment/settings.json")
+  # shellcheck disable=SC2016
+  assert_contains "$command" '${AUGMENT_PROJECT_DIR:-}' "auggie SessionStart hook lacks an inline-default project dir"
+  assert_contains "$command" 'fm-sessionstart-nudge.sh' "auggie SessionStart hook does not invoke the wrapper"
+  pass "auggie tracked .augment/settings.json registers the shared session-start nudge"
+}
+
 test_genuine_primary_nudges
 test_gate_env_is_silent
 test_gate_common_dir_is_silent
@@ -409,3 +418,4 @@ test_run_unknown_source_takes_the_helm
 test_run_gate_and_scope_are_silent
 test_run_reports_a_failed_session_start_as_digest_text
 test_pi_large_sessionstart_digest_is_delivered_loudly
+test_auggie_sessionstart_registration

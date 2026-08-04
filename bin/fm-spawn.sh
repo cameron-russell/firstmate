@@ -86,7 +86,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|muse|auggie)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
@@ -139,6 +139,11 @@
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
 # log; muse is crewmate/scout only and is refused for --secondmate.
+# auggie uses a gitignored worktree .augment/settings.local.json carrying both a
+# Stop turn-end hook and its autonomy allow-list (no wildcard permission exists).
+# The local file is a distinct path from the tracked repo-root .augment/settings.json
+# primary hooks, so a firstmate-repo crew worktree never overwrites or dirties that
+# tracked file; auggie merges settings.local.json over settings.json.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -789,7 +794,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|muse|auggie)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -877,6 +882,17 @@ launch_template() {
     # written below. Nothing to place in the template for it.
     # codex, opencode, and kimi are also markerless and share this inherited-marker hazard; changing their verified launch boundaries belongs in follow-up work.
     muse) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS XDG_CONFIG_HOME=__MUSECONFIG__ XDG_DATA_HOME=__MUSEDATA__ MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on __MUSEBIN__ --yolo __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # auggie (Augment CLI): a positional prompt starts the supervised interactive
+    # session (verified, auggie 0.34.0). auggie has no wildcard permission flag -
+    # "*:allow" is rejected because a tool name may only contain letters, numbers,
+    # hyphens, and underscores - so autonomy is granted by a per-tool allow-list in
+    # the worktree .augment/settings.json installed below, the targeted equivalent
+    # of claude's --dangerously-skip-permissions. --allow-indexing skips the
+    # interactive indexing screen. auggie's turn-end signal also does NOT ride the
+    # launch command - it is a Stop-event hook in that same worktree
+    # .augment/settings.local.json (verified to fire), so the template is identical
+    # for ship/scout/secondmate.
+    auggie) printf '%s' 'auggie --allow-indexing __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
@@ -1049,7 +1065,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+    claude|codex|opencode|pi|pi-signed|grok|kimi|muse|auggie)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -1107,7 +1123,18 @@ effort_flag_for_harness() {
     # to a different, non-interactive launch mode, so fm-spawn does not pass it.
     # kimi likewise has no reasoning-effort flag; the requested axis stays in
     # task metadata but never reaches the launch command.
+    # auggie exposes no reasoning-effort flag (verified, auggie 0.34.0 --help),
+    # so like opencode and kimi the requested effort is recorded in metadata but
+    # never reaches the launch command.
   esac
+}
+
+# Single owner of auggie's autonomy allow-list, used by both the crewmate and
+# secondmate settings.json writes so the two can never drift. Names current tools
+# plus their legacy aliases so autonomy holds across auggie versions; each
+# permission MUST be an object with a type field, not a bare string.
+auggie_permissions_json() {
+  printf '%s' '"toolPermissions":[{"toolName":"terminal","permission":{"type":"allow"}},{"toolName":"read","permission":{"type":"allow"}},{"toolName":"edit","permission":{"type":"allow"}},{"toolName":"write","permission":{"type":"allow"}},{"toolName":"web-search","permission":{"type":"allow"}},{"toolName":"web-fetch","permission":{"type":"allow"}},{"toolName":"remove-files","permission":{"type":"allow"}},{"toolName":"launch-process","permission":{"type":"allow"}},{"toolName":"view","permission":{"type":"allow"}},{"toolName":"str-replace-editor","permission":{"type":"allow"}},{"toolName":"save-file","permission":{"type":"allow"}}]'
 }
 
 case "$LAUNCH" in
@@ -1948,6 +1975,24 @@ if [ "$KIND" != secondmate ]; then
 EOF
       exclude_path '.claude/settings.local.json'
       ;;
+    auggie*)
+      # auggie reads the workspace .augment/settings.local.json (verified, auggie
+      # 0.34.0: the Stop hook there fires on turn end) and merges it over the
+      # tracked repo-root .augment/settings.json. The local file is chosen so a
+      # firstmate-repo crew worktree never clobbers or dirties that tracked primary
+      # file. One file carries both the turn-end Stop hook and the autonomy
+      # allow-list, since auggie has no wildcard permission. The allow-list names
+      # both current tools (terminal, read, edit, write, web-search, web-fetch,
+      # remove-files) and their legacy aliases (launch-process, view,
+      # str-replace-editor, save-file) so autonomy holds across auggie versions;
+      # unmatched tools follow implicit runtime behavior. The allow-list JSON is
+      # owned by auggie_permissions_json.
+      mkdir -p "$WT/.augment"
+      cat > "$WT/.augment/settings.local.json" <<EOF
+{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"touch '$TURNEND'"}]}]},$(auggie_permissions_json)}
+EOF
+      exclude_path '.augment/settings.local.json'
+      ;;
     opencode*)
       mkdir -p "$WT/.opencode/plugins"
       cat > "$WT/.opencode/plugins/fm-busy-state.js" <<EOF
@@ -2135,6 +2180,23 @@ EOF
       printf '%s\n' "${auth_file##*/}" > "$STATE/$ID.kimi-turnend-token"
       printf 'token=%s\n' "${auth_file##*/}" > "$WT/.fm-kimi-turnend"
       exclude_path '.fm-kimi-turnend'
+      ;;
+  esac
+fi
+
+# auggie secondmate autonomy: a secondmate needs the same unattended tool
+# allow-list as a crewmate, but no turn-end Stop hook (an idle secondmate pane is
+# healthy, so there is no stale-pane detection to wake). claude/codex/grok
+# secondmates get autonomy from their launch flag, so this extra write is
+# auggie-specific because auggie's autonomy lives in the settings file.
+if [ "$KIND" = secondmate ]; then
+  case "$HARNESS" in
+    auggie*)
+      mkdir -p "$WT/.augment"
+      cat > "$WT/.augment/settings.local.json" <<EOF
+{$(auggie_permissions_json)}
+EOF
+      exclude_path '.augment/settings.local.json'
       ;;
   esac
 fi

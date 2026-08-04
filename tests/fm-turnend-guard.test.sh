@@ -109,6 +109,7 @@ install_guard_scripts() {
   mkdir -p "$dir/bin"
   cp "$ROOT/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard.sh"
   cp "$ROOT/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-turnend-guard-grok.sh"
+  cp "$ROOT/bin/fm-turnend-guard-auggie.sh" "$dir/bin/fm-turnend-guard-auggie.sh"
   cp "$ROOT/bin/fm-operational-input.sh" "$dir/bin/fm-operational-input.sh"
   cp "$ROOT/bin/fm-supervision-instructions.sh" "$dir/bin/fm-supervision-instructions.sh"
   cp "$ROOT/bin/fm-harness.sh" "$dir/bin/fm-harness.sh"
@@ -117,7 +118,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
-  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
+  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-turnend-guard-auggie.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
 }
 
 mark_codex_hook_root() {
@@ -696,6 +697,69 @@ test_grok_adapter_native_false_blocks_without_resume() {
   assert_contains "$out" 'TURN WOULD END BLIND' "native block must pass shared guard feedback to Grok"
   [ ! -e "$log" ] || fail "native path started grok --resume"
   pass "fm-turnend-guard-grok: native false delegates blocking feedback with zero resume processes"
+}
+
+test_auggie_adapter_forces_one_resume_when_unhealthy() {
+  local dir fakebin log out status
+  dir=$(make_primary_dir "$TMP_ROOT/auggie-adapter-block")
+  : > "$dir/state/task1.meta"
+  fakebin=$(fm_fakebin "$TMP_ROOT/auggie-adapter-fakebin")
+  log="$TMP_ROOT/auggie-adapter-call.log"
+  cat > "$fakebin/auggie" <<EOF
+#!/usr/bin/env bash
+{
+  printf 'active=%s\n' "\${AUGGIE_TURNEND_GUARD_ACTIVE:-}"
+  printf 'args:'
+  for arg in "\$@"; do
+    printf ' <%s>' "\$arg"
+  done
+  printf '\n'
+} >> "$log"
+EOF
+  chmod +x "$fakebin/auggie"
+  out=$(printf '{"conversation_id":"conv-test","agent_stop_cause":"end_turn"}' | PATH="$fakebin:$PATH" AUGMENT_PROJECT_DIR="$dir" bash "$dir/bin/fm-turnend-guard-auggie.sh" 2>&1); status=$?
+  expect_code 0 "$status" "auggie adapter must fail open after queuing a forced resume"
+  [ -z "$out" ] || fail "auggie adapter printed output: $out"
+  assert_contains "$(cat "$log")" 'active=1' "auggie adapter must mark its forced resume as loop-guarded"
+  assert_contains "$(cat "$log")" '<--resume>' "auggie adapter must resume the current session"
+  assert_contains "$(cat "$log")" '<conv-test>' "auggie adapter must pass the hook conversation_id"
+  assert_contains "$(cat "$log")" '<--print>' "auggie adapter must resume as a one-shot print run"
+  assert_contains "$(cat "$log")" 'FIRSTMATE_OP: v1 turn-end-guard: TURN WOULD END BLIND' "auggie adapter must retain the typed guard kind"
+  pass "fm-turnend-guard-auggie: forces one explicitly marked same-session resume when the shared predicate blocks"
+}
+
+test_auggie_adapter_loop_guard_skips_resume() {
+  local dir fakebin log out status
+  dir=$(make_primary_dir "$TMP_ROOT/auggie-adapter-loop")
+  : > "$dir/state/task1.meta"
+  fakebin=$(fm_fakebin "$TMP_ROOT/auggie-adapter-loop-fakebin")
+  log="$TMP_ROOT/auggie-adapter-loop-call.log"
+  cat > "$fakebin/auggie" <<EOF
+#!/usr/bin/env bash
+printf 'called\n' >> "$log"
+EOF
+  chmod +x "$fakebin/auggie"
+  out=$(printf '{"conversation_id":"conv-test","agent_stop_cause":"end_turn"}' | PATH="$fakebin:$PATH" AUGMENT_PROJECT_DIR="$dir" AUGGIE_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-auggie.sh" 2>&1); status=$?
+  expect_code 0 "$status" "auggie adapter must allow its own forced resume turn to end"
+  [ -z "$out" ] || fail "auggie adapter printed output while loop-guarded: $out"
+  [ ! -e "$log" ] || fail "auggie adapter spawned another resume while loop-guarded: $(cat "$log")"
+  pass "fm-turnend-guard-auggie: loop guard prevents a nested resume loop"
+}
+
+test_settings_hook_uses_claude_project_dir() {
+  local settings command
+  settings="$ROOT/.claude/settings.json"
+  [ -f "$settings" ] || fail "tracked .claude/settings.json is missing"
+  command=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$settings")
+  [ -n "$command" ] || fail "Stop hook command is missing from .claude/settings.json"
+  assert_contains "$command" 'CLAUDE_PROJECT_DIR' "Stop hook must resolve via CLAUDE_PROJECT_DIR, not a cwd-relative path"
+  assert_contains "$command" 'fm-turnend-guard.sh --claude' "Stop hook must invoke fm-turnend-guard.sh in cooperative --claude mode"
+  case "$command" in
+    bin/fm-turnend-guard.sh|./bin/fm-turnend-guard.sh)
+      fail "Stop hook must not use a bare relative path (cwd-dependent): $command"
+      ;;
+  esac
+  pass ".claude/settings.json: Stop hook uses CLAUDE_PROJECT_DIR-anchored --claude guard command"
 }
 
 test_grok_adapter_native_true_allows_without_resume() {
@@ -1535,6 +1599,36 @@ test_hook_claude_mode_secondmate_reblocks_like_primary() {
   pass "fm-turnend-guard --claude: secondmate home re-blocks unclaimed and allows auto-arm-claimed stops"
 }
 
+test_grok_hook_invokes_adapter() {
+  local settings command
+  settings="$ROOT/.grok/hooks/fm-primary-turnend-guard.json"
+  [ -f "$settings" ] || fail "tracked grok primary hook config is missing"
+  command=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$settings")
+  [ -n "$command" ] || fail "Stop hook command is missing from grok primary hook config"
+  assert_contains "$command" 'GROK_WORKSPACE_ROOT' "grok hook must anchor from GROK_WORKSPACE_ROOT"
+  assert_contains "$command" 'fm-turnend-guard-grok.sh' "grok hook must invoke the adapter"
+  pass ".grok primary hook: Stop hook invokes the grok adapter"
+}
+
+test_auggie_settings_invokes_primary_hooks() {
+  local settings stop pre0 pre1
+  settings="$ROOT/.augment/settings.json"
+  [ -f "$settings" ] || fail "tracked repo-root .augment/settings.json is missing"
+  stop=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$settings")
+  [ -n "$stop" ] || fail "Stop hook command is missing from .augment/settings.json"
+  assert_contains "$stop" 'AUGMENT_PROJECT_DIR' "auggie Stop hook must anchor from AUGMENT_PROJECT_DIR"
+  assert_contains "$stop" 'fm-turnend-guard-auggie.sh' "auggie Stop hook must invoke the auggie adapter"
+  # Both PreToolUse seatbelts must be wired with an empty matcher and --auggie.
+  jq -e '[.hooks.PreToolUse[] | select(has("matcher") | not)] | length >= 2' "$settings" >/dev/null \
+    || fail "auggie PreToolUse seatbelts must use an empty matcher so they apply to every tool"
+  pre0=$(jq -r '.hooks.PreToolUse[0].hooks[0].command // empty' "$settings")
+  pre1=$(jq -r '.hooks.PreToolUse[1].hooks[0].command // empty' "$settings")
+  assert_contains "$pre0$pre1" 'fm-arm-pretool-check.sh" --auggie' "auggie must wire the arm seatbelt in --auggie mode"
+  assert_contains "$pre0$pre1" 'fm-cd-pretool-check.sh" --auggie' "auggie must wire the cd seatbelt in --auggie mode"
+  assert_contains "$pre0$pre1" 'AUGMENT_PROJECT_DIR' "auggie PreToolUse seatbelts must anchor from AUGMENT_PROJECT_DIR"
+  pass ".augment primary settings: Stop and PreToolUse hooks invoke the auggie adapters"
+}
+
 test_predicate_healthy_no_inflight
 test_predicate_unhealthy_no_beacon
 test_predicate_unhealthy_stale_beacon
@@ -1575,11 +1669,16 @@ test_grok_adapter_native_true_allows_without_resume
 test_grok_adapter_snake_case_native_and_camel_precedence
 test_grok_adapter_invalid_inputs_start_neither_path
 test_grok_adapter_missing_jq_and_no_supervision_allow
+test_auggie_adapter_forces_one_resume_when_unhealthy
+test_auggie_adapter_loop_guard_skips_resume
+test_settings_hook_uses_claude_project_dir
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root
 test_codex_hook_ignores_nested_git_root_guard
 test_opencode_plugin_anchors_guard_to_worktree
 test_pi_extension_injects_once_per_logical_agent_run
 test_pi_extension_retries_after_followup_delivery_failure
+test_grok_hook_invokes_adapter
+test_auggie_settings_invokes_primary_hooks
 test_hook_claude_mode_reblocks_stop_hook_active_when_unhealthy
 test_hook_claude_mode_reblocks_x_mode_without_tasks
 test_hook_claude_mode_allows_when_autoarm_owner_alive

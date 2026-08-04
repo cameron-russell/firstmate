@@ -9,7 +9,9 @@
 # This file is sourced by scripts and has no side effects on source.
 
 # Known harness command names; extend when a new adapter is verified.
-FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$'
+# auggie ships as a node script whose path is .../auggie/augment.mjs, so the
+# bare `auggie` token matches both its comm and its node-interpreter args path.
+FM_HARNESS_RE='claude|codex|opencode|grok|kimi|auggie|^pi$|^pi-signed$'
 
 # The same harnesses as exact executable names. Keep in sync with
 # FM_HARNESS_RE. Used only for the stricter path evidence below, where the

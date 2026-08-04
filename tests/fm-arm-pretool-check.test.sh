@@ -428,13 +428,27 @@ test_default_mode_stdout_has_grok_json_on_deny() {
   pass "default mode: stdout carries Grok-shaped decision JSON on deny"
 }
 
+test_auggie_mode_stdout_has_hookspecificoutput_on_deny() {
+  local out rc
+  out=$("$CHECK" --auggie --command 'bin/fm-watch-arm.sh &' 2>/dev/null)
+  rc=$?
+  [ "$rc" -eq 2 ] || fail "--auggie deny must exit 2, got $rc"
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny" and (.hookSpecificOutput.permissionDecisionReason | length > 0)' >/dev/null 2>&1 \
+    || fail "--auggie deny must put hookSpecificOutput.permissionDecision=deny with a reason on stdout: $out"
+  printf '%s' "$out" | jq -e 'has("decision")' >/dev/null 2>&1 \
+    && fail "--auggie deny must NOT also emit the Grok decision object: $out"
+  pass "--auggie: stdout carries hookSpecificOutput deny JSON with a reason, and not the Grok object"
+}
+
 test_allow_is_silent_both_modes() {
-  local out1 out2
+  local out1 out2 out3
   out1=$("$CHECK" --command 'exec bin/fm-watch-arm.sh' 2>&1)
   out2=$("$CHECK" --claude --command 'exec bin/fm-watch-arm.sh' 2>&1)
+  out3=$("$CHECK" --auggie --command 'exec bin/fm-watch-arm.sh' 2>&1)
   [ -z "$out1" ] || fail "default allow must be silent, got: $out1"
   [ -z "$out2" ] || fail "--claude allow must be silent, got: $out2"
-  pass "allow is silent on both stdout and stderr in default and --claude mode"
+  [ -z "$out3" ] || fail "--auggie allow must be silent, got: $out3"
+  pass "allow is silent on both stdout and stderr in default, --claude, and --auggie mode"
 }
 
 # --- harness wiring: each adapter invokes the shared checker -----------------
@@ -463,5 +477,6 @@ test_failopen_missing_jq
 test_failopen_missing_node
 test_claude_mode_stdout_empty_on_deny
 test_default_mode_stdout_has_grok_json_on_deny
+test_auggie_mode_stdout_has_hookspecificoutput_on_deny
 test_allow_is_silent_both_modes
 test_shellcheck_clean

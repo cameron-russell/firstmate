@@ -79,6 +79,7 @@ It does not permit `cd /home/project`, because an absolute-path `cd` remains a p
 - Claude sends stdin JSON at `.tool_input.command` and adds `--claude` to preserve Claude's stderr-only deny requirement.
 - Codex sends stdin JSON at `.tool_input.command` without `--claude`.
 - Grok sends stdin JSON at `.toolInput.command`.
+- auggie sends stdin JSON at `.tool_input.command` and adds `--auggie` so the deny object lands on stdout where auggie reads it.
 - OpenCode sends the exact command string through `--command <exact string>`.
 - Pi and pi-signed send the exact command string through `--command <exact string>`.
 
@@ -97,9 +98,11 @@ Identical in shape to `docs/arm-pretool-check.md`:
 - Deny returns exit 2 and writes `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"[persistent-cd] reason"}` to stderr.
 - Default deny mode also writes `{"decision":"deny","reason":"[persistent-cd] reason"}` to stdout for Grok.
 - `--claude` suppresses stdout completely because Claude ignores a PreToolUse deny when stdout is nonempty.
+- `--auggie` writes the `{"hookSpecificOutput":{...,"permissionDecision":"deny","permissionDecisionReason":"[persistent-cd] reason"}}` object to stdout, where auggie reads the decision.
 - Codex blocks on exit 2 and displays stderr.
 - OpenCode throws only when the checker exits 2.
 - Pi and pi-signed return `{block: true}` only when the checker exits 2.
+- auggie blocks the tool on the stdout `permissionDecision=deny` object.
 
 ## Shared classifier ownership
 
@@ -117,6 +120,7 @@ The cd-guard never duplicates shell lexing; it adds only the cd-specific decisio
 | Grok | `.grok/hooks/fm-primary-cd-check.json` PreToolUse hook anchored on `${GROK_WORKSPACE_ROOT:-}` | Consumes the stdout `decision=deny` object. |
 | OpenCode | `.opencode/plugins/fm-primary-cd-check.js` `tool.execute.before` | Throws, which surfaces as the failed tool result. |
 | Pi | `.pi/extensions/fm-primary-turnend-guard.ts` `tool_call` handler | Returns `{block: true}`; piggybacks on the already-loaded primary extension so no extra `-e` flag is needed. |
+| auggie | Tracked repo-root `.augment/settings.json` PreToolUse hook (empty matcher, so every tool) anchored on `${AUGMENT_PROJECT_DIR:-}`, forwarding stdin with `--auggie` | Consumes the stdout `hookSpecificOutput.permissionDecision=deny` object. |
 
 Each harness runs the cd-guard alongside the watcher-arm seatbelt; the two are independent checks, and either deny blocks the command.
 Every shell variable reference in the Grok hook command carries an inline default (`${GROK_WORKSPACE_ROOT:-}`) because Grok expands the raw hook command before `bash -lc` runs it, the same requirement documented in `docs/arm-pretool-check.md`.

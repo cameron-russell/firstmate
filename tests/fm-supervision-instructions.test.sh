@@ -16,7 +16,19 @@ test_selected_harness_block_only() {
   assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex checkpoint helper missing"
   assert_not_contains "$out" "Mode: Claude Stop-hook-owned supervision." "renderer printed the claude snippet too"
   assert_not_contains "$out" "Mode: Pi extension background wake." "renderer printed the pi snippet too"
+  assert_not_contains "$out" "Mode: auggie background-notify supervision." "renderer printed the auggie snippet too"
   pass "renderer prints exactly the selected harness block"
+}
+
+test_auggie_block_selected() {
+  local out
+  out=$("$RENDER" --harness auggie)
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: auggie" "auggie heading missing"
+  assert_contains "$out" "Mode: auggie background-notify supervision." "auggie snippet missing"
+  assert_contains "$out" "bin/fm-watch-arm-auggie.sh" "auggie snippet lost the background arm wrapper"
+  assert_contains "$out" "augment-user-message" "auggie snippet lost its background-completion wake mechanism"
+  assert_not_contains "$out" "Mode: Codex foreground checkpoint." "renderer printed the codex snippet too"
+  pass "renderer prints the auggie background-notify block"
 }
 
 test_unknown_fallback() {
@@ -117,6 +129,15 @@ test_cross_harness_ordinary_continuation_and_repair_matrix() {
   assert_contains "$out" "foreground checkpoint" "codex recovery line lost its checkpoint repair"
   assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex recovery line lost the checkpoint command"
 
+  out=$("$RENDER" --harness auggie)
+  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
+  assert_contains "$ordinary" "re-arm" "auggie ordinary-wake line does not tell the model to re-arm"
+  assert_contains "$ordinary" "bin/fm-watch-arm-auggie.sh" "auggie ordinary-wake line lost the background arm wrapper"
+  assert_contains "$ordinary" "launch-process background task" "auggie ordinary-wake line lost its launch-process background ownership"
+  out=$("$RENDER" --harness auggie --repair-line)
+  assert_contains "$out" "bin/fm-watch-arm-auggie.sh" "auggie recovery line lost the background arm wrapper"
+  assert_contains "$out" "launch-process background task" "auggie recovery line lost its launch-process background repair"
+
   pass "renderer preserves every harness ordinary-continuation and missing-cycle repair path"
 }
 
@@ -177,6 +198,7 @@ test_pi_snippet_uses_effective_extension_path() {
 }
 
 test_selected_harness_block_only
+test_auggie_block_selected
 test_unknown_fallback
 test_conditional_stanzas
 test_repair_lines

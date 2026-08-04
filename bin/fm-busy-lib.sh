@@ -169,11 +169,14 @@ fm_busy_current_gen() {  # <state-dir> <id>
 # fm_busy_sources_for_harness: the semantic sources trusted to classify a
 # task recorded with <harness>. One line, space-separated, possibly empty.
 # The firstmate-owned sources are appended for every converted adapter.
-# Grok and muse deliberately trust nothing: neither has a semantic WRITER, so
-# neither is armed, and both read their live source on demand in the classifier
-# (grok's rendered tail, muse's session log) rather than through a stored
-# record. Listing a source here without a writer that can clear it would seed a
-# busy record nothing could ever settle.
+# Grok, muse, and auggie deliberately trust nothing: none has a semantic busy
+# WRITER, so none is armed. Grok and muse read their live source on demand in
+# the classifier (grok's rendered tail, muse's session log) rather than through
+# a stored record; auggie relies on process liveness plus its Stop-driven
+# turn-end wake, because auggie exposes no per-turn open hook (no
+# UserPromptSubmit; its SessionStart fires once per TUI session, not per turn).
+# Listing a source here without a writer that can clear it would seed a busy
+# record nothing could ever settle.
 fm_busy_sources_for_harness() {  # <harness>
   local adapter=
   case "${1:-}" in

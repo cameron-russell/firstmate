@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc '[ -n \"${AUGMENT_PROJECT_DIR:-}\" ] || exit 0; exec \"${AUGMENT_PROJECT_DIR:-}/bin/fm-sessionstart-nudge.sh\"'",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc '[ -n \"${AUGMENT_PROJECT_DIR:-}\" ] || exit 0; exec \"${AUGMENT_PROJECT_DIR:-}/bin/fm-arm-pretool-check.sh\" --auggie'",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc '[ -n \"${AUGMENT_PROJECT_DIR:-}\" ] || exit 0; exec \"${AUGMENT_PROJECT_DIR:-}/bin/fm-cd-pretool-check.sh\" --auggie'",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc '[ -n \"${AUGMENT_PROJECT_DIR:-}\" ] || exit 0; exec \"${AUGMENT_PROJECT_DIR:-}/bin/fm-turnend-guard-auggie.sh\"'",
+            "timeout": 180000
+          }
+        ]
+      }
+    ]
+  }
+}

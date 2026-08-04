@@ -1583,24 +1583,18 @@ else
     record_script_result "$script" "$rc" "$duration" "$out" "$end_iso"
   }
 
-  worker_pid_is_running() {
-    local want=$1 running inventory="$RUN_TMP/running-pids"
-    # Keep `jobs` in this shell. A process substitution runs it in a subshell
-    # without this shell's job table on Bash 3.2/5.x, falsely reporting every
-    # worker complete and making the scheduler wait for the oldest PID.
-    jobs -r -p >"$inventory"
-    while IFS= read -r running; do
-      [ "$running" = "$want" ] && return 0
-    done <"$inventory"
-    return 1
-  }
-
   wait_one_completed_job_worker() {
+    # A worker writes its exit file as its final act before exiting, so the
+    # exit file's presence is the authoritative, atomic "this worker is done"
+    # signal. Reap whichever slot has produced it, regardless of age, so a
+    # freed slot refills immediately. Consulting `jobs` here was unreliable
+    # across Bash versions and could make the scheduler wait for the oldest
+    # PID even when a younger worker had already finished.
     local slot work
     while :; do
       for slot in "${!WORKER_PIDS[@]}"; do
         work="$RUN_TMP/w${WORKER_IDX[$slot]}"
-        if [ -f "$work/exit" ] || ! worker_pid_is_running "${WORKER_PIDS[$slot]}"; then
+        if [ -f "$work/exit" ]; then
           wait_one_job_worker "$slot"
           return
         fi
